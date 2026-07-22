@@ -21,17 +21,27 @@ if (!admin.apps.length) {
     }),
   });
 }
+
 const db = admin.firestore();
 
 module.exports = async (req, res) => {
   try {
+    // Log every callback received
+    console.log("========== M-Pesa Callback ==========");
+    console.log("Time:", new Date().toISOString());
+    console.log("Request Body:");
+    console.log(JSON.stringify(req.body, null, 2));
+    console.log("====================================");
+
     const callback = req.body && req.body.Body && req.body.Body.stkCallback;
+
     if (!callback) {
-      res.status(400).json({ error: 'Unexpected payload shape' });
-      return;
+      console.log("Unexpected payload:", req.body);
+      return res.status(400).json({ error: 'Unexpected payload shape' });
     }
 
     const { CheckoutRequestID, ResultCode, ResultDesc } = callback;
+
     const update = {
       status: ResultCode === 0 ? 'success' : 'failed',
       resultCode: ResultCode,
@@ -41,23 +51,36 @@ module.exports = async (req, res) => {
 
     if (ResultCode === 0 && callback.CallbackMetadata) {
       const items = callback.CallbackMetadata.Item || [];
-      const get = name => {
+
+      const get = (name) => {
         const item = items.find(i => i.Name === name);
         return item ? item.Value : null;
       };
+
       update.mpesaReceipt = get('MpesaReceiptNumber');
       update.amountPaid = get('Amount');
       update.payerPhone = get('PhoneNumber');
       update.transactionDate = get('TransactionDate');
     }
 
-    await db.collection('mpesaPayments').doc(CheckoutRequestID).set(update, { merge: true });
+    await db.collection('mpesaPayments')
+      .doc(CheckoutRequestID)
+      .set(update, { merge: true });
 
-    // Safaricom just needs a quick acknowledgement — this exact shape.
-    res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
+    console.log("Firestore updated successfully.");
+    console.log("CheckoutRequestID:", CheckoutRequestID);
+
+    return res.status(200).json({
+      ResultCode: 0,
+      ResultDesc: 'Accepted'
+    });
+
   } catch (err) {
-    console.error('callback error:', err);
-    // Still acknowledge, so Safaricom doesn't keep retrying a broken payload.
-    res.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' });
+    console.error("Callback Error:", err);
+
+    return res.status(200).json({
+      ResultCode: 0,
+      ResultDesc: 'Accepted'
+    });
   }
 };
